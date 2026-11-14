@@ -4,6 +4,8 @@ Pipeline da disciplina de Big Data para as eleições de 2024. A pergunta do tra
 
 Fonte: Portal de Dados Abertos do TSE. Recorte: candidaturas, receitas e despesas contratadas de 2024, por UF.
 
+O registro do que a disciplina pediu, do que já está no repositório e do que ainda falta está em [docs/DOCUMENTO_DO_PROJETO.md](docs/DOCUMENTO_DO_PROJETO.md).
+
 Nesta etapa os dados públicos passam pelo tratamento, ficam no grão de uma candidatura e estão prontos para carga no PostgreSQL da Aiven. A infraestrutura nasce por Terraform. Credenciais não entram no repositório.
 
 ```text

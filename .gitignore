@@ -18,3 +18,6 @@ etl/data_processed_fixture/
 venv/
 __pycache__/
 *.pyc
+
+# Editor local
+.cursor/
