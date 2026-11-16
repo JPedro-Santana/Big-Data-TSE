@@ -2,7 +2,7 @@
 """Painel local: abre no navegador e lê o PostgreSQL da Aiven.
 
 Uso, na raiz do projeto:
-    python -m streamlit run painel/app.py
+    python -m streamlit run dashboard/painel/app.py
 """
 
 from __future__ import annotations

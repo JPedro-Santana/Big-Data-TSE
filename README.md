@@ -21,6 +21,7 @@ CSVs do TSE
 | Pasta | O que contém |
 |---|---|
 | `etl/` | Tratamento (`02_transform.py`), carga (`03_load.py`) e exploração |
+| `dashboard/painel/` | Painel local que abre no navegador e lê o PostgreSQL da Aiven. |
 | `terraform/` | Provisionamento do PostgreSQL |
 | `docs/` | Decisões de LGPD e dicionário do tratamento |
 | `requirements.txt` | Dependências Python |
