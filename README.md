@@ -187,7 +187,7 @@ O script imprime a quantidade de linhas de cada tabela e o tamanho do banco. Ess
 Com o serviço da Aiven em Running e o `.env` na raiz:
 
 ```powershell
-.\venv\Scripts\python.exe -m streamlit run painel\app.py
+.\venv\Scripts\python.exe -m streamlit run dashboard\painel\app.py
 ```
 
 Abre em http://localhost:8501. O painel lê as tabelas `candidatura` e `financiamento` e compara a fatia das candidaturas com a fatia do dinheiro, por gênero, raça e cargo.
