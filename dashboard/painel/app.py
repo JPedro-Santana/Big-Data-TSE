@@ -29,6 +29,26 @@ ORDEM_RACA = [
     "NÃO DIVULGÁVEL",
 ]
 ORDEM_CARGO = ["VEREADOR", "PREFEITO", "VICE-PREFEITO"]
+ORDEM_FAIXA = [
+    "ATÉ 29 ANOS",
+    "30 A 39 ANOS",
+    "40 A 49 ANOS",
+    "50 A 59 ANOS",
+    "60 ANOS OU MAIS",
+    "SEM INFORMAÇÃO",
+]
+
+# Regiões do IBGE. O DF não entra porque o pleito de 2024 é municipal.
+REGIOES = {
+    "Norte": ["AC", "AM", "AP", "PA", "RO", "RR", "TO"],
+    "Nordeste": ["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"],
+    "Centro-Oeste": ["GO", "MS", "MT"],
+    "Sudeste": ["ES", "MG", "RJ", "SP"],
+    "Sul": ["PR", "RS", "SC"],
+}
+
+# População negra segundo o IBGE: pessoas pretas e pardas.
+RACA_NEGRA = ["PRETA", "PARDA"]
 
 DINHEIRO = {
     "Receita": "vr_receita",
@@ -51,6 +71,14 @@ def url_sqlalchemy(url: str) -> str:
 
 def inteiro(valor: float) -> str:
     return f"{int(valor):,}".replace(",", ".")
+
+
+def reais_curto(valor: float) -> str:
+    """Versão curta para caber no card: R$ 7,04 bi, R$ 96,82 mi."""
+    for limite, sufixo in ((1e9, "bi"), (1e6, "mi"), (1e3, "mil")):
+        if abs(valor) >= limite:
+            return f"R$ {valor / limite:.2f}".replace(".", ",") + f" {sufixo}"
+    return reais(valor)
 
 
 def reais(valor: float) -> str:
@@ -76,17 +104,86 @@ def base(cargo: str, coluna_dinheiro: str) -> pd.DataFrame:
     if cargo != "Todos":
         filtro = "WHERE c.ds_cargo = :cargo"
         params["cargo"] = cargo
+    # A faixa etária sai pronta do banco. Assim a consulta continua
+    # agregada (poucas linhas) e os filtros cruzados rodam na memória.
     sql = f"""
         SELECT c.sg_uf, c.ds_cargo, c.ds_genero, c.ds_cor_raca,
+               CASE
+                   WHEN c.nr_idade_data_posse IS NULL THEN 'SEM INFORMAÇÃO'
+                   WHEN c.nr_idade_data_posse < 30 THEN 'ATÉ 29 ANOS'
+                   WHEN c.nr_idade_data_posse < 40 THEN '30 A 39 ANOS'
+                   WHEN c.nr_idade_data_posse < 50 THEN '40 A 49 ANOS'
+                   WHEN c.nr_idade_data_posse < 60 THEN '50 A 59 ANOS'
+                   ELSE '60 ANOS OU MAIS'
+               END AS faixa_etaria,
                COUNT(*) AS candidaturas,
                COALESCE(SUM(f.{coluna_dinheiro}), 0) AS dinheiro
         FROM candidatura c
         JOIN financiamento f ON f.sq_candidato = c.sq_candidato
         {filtro}
-        GROUP BY c.sg_uf, c.ds_cargo, c.ds_genero, c.ds_cor_raca
+        GROUP BY c.sg_uf, c.ds_cargo, c.ds_genero, c.ds_cor_raca, faixa_etaria
     """
     with conectar().connect() as conexao:
         return pd.read_sql(text(sql), conexao, params=params)
+
+
+def opcoes(df: pd.DataFrame, coluna: str, ordem: list[str]) -> list[str]:
+    presentes = set(df[coluna].dropna().astype(str))
+    return [nome for nome in ordem if nome in presentes] + sorted(presentes - set(ordem))
+
+
+def filtros_laterais(df: pd.DataFrame) -> dict[str, list[str]]:
+    """Filtros cruzados: todos valem juntos. Lista vazia quer dizer 'todos'."""
+    st.sidebar.header("Filtros")
+    st.sidebar.selectbox(
+        "Ano",
+        ["2024"],
+        disabled=True,
+        help="A base tratada cobre só o pleito municipal de 2024.",
+    )
+    regioes = st.sidebar.multiselect("Região", list(REGIOES), placeholder="Todas")
+    ufs_da_regiao = sorted(
+        uf for regiao in (regioes or REGIOES) for uf in REGIOES[regiao]
+    )
+    ufs_disponiveis = [uf for uf in ufs_da_regiao if uf in set(df["sg_uf"].astype(str))]
+    ufs = st.sidebar.multiselect("Estado (UF)", ufs_disponiveis, placeholder="Todos")
+    generos = st.sidebar.multiselect(
+        "Gênero", opcoes(df, "ds_genero", ORDEM_GENERO), placeholder="Todos"
+    )
+    racas = st.sidebar.multiselect(
+        "Raça/cor", opcoes(df, "ds_cor_raca", ORDEM_RACA), placeholder="Todas"
+    )
+    faixas = st.sidebar.multiselect(
+        "Faixa etária", opcoes(df, "faixa_etaria", ORDEM_FAIXA), placeholder="Todas"
+    )
+    return {
+        "sg_uf": ufs or (ufs_da_regiao if regioes else []),
+        "ds_genero": generos,
+        "ds_cor_raca": racas,
+        "faixa_etaria": faixas,
+    }
+
+
+def aplicar_filtros(df: pd.DataFrame, escolhas: dict[str, list[str]]) -> pd.DataFrame:
+    saida = df
+    for coluna, valores in escolhas.items():
+        if valores:
+            saida = saida[saida[coluna].astype(str).isin(valores)]
+    return saida
+
+
+def mulheres_negras(df: pd.DataFrame) -> tuple[float, float] | None:
+    """Fatia das candidaturas e fatia do dinheiro de mulheres pretas e pardas."""
+    alvo = (df["ds_genero"] == "FEMININO") & df["ds_cor_raca"].isin(RACA_NEGRA)
+    total_candidaturas = float(df["candidaturas"].sum())
+    total_dinheiro = float(df["dinheiro"].sum())
+    if not alvo.any() or not total_candidaturas:
+        return None
+    pct_candidaturas = float(df.loc[alvo, "candidaturas"].sum()) / total_candidaturas * 100
+    pct_dinheiro = (
+        float(df.loc[alvo, "dinheiro"].sum()) / total_dinheiro * 100 if total_dinheiro else 0.0
+    )
+    return pct_candidaturas, pct_dinheiro
 
 
 def comparar(df: pd.DataFrame, coluna: str) -> pd.DataFrame:
@@ -137,7 +234,9 @@ def grafico(grupo: pd.DataFrame, coluna: str, titulo: str) -> alt.Chart:
                 alt.Tooltip("percentual:Q", title="%", format=".1f"),
             ],
         )
-        .properties(title=titulo, height=46 * max(len(grupo), 1) + 30)
+        # Altura por barra (Step). Com altura total fixa, o Streamlit espremia
+        # o gráfico de gênero e o rótulo MASCULINO sumia por sobreposição.
+        .properties(title=titulo, height=alt.Step(20))
     )
 
 
@@ -186,16 +285,43 @@ def main() -> None:
         )
         st.stop()
 
+    escolhas = filtros_laterais(df)
+    df = aplicar_filtros(df, escolhas)
+
     if df.empty:
-        st.warning("A consulta não voltou linhas para esse recorte.")
+        st.warning("Nenhuma candidatura nesse cruzamento de filtros. Tente afrouxar algum filtro.")
         st.stop()
 
     total_candidaturas = float(df["candidaturas"].sum())
     total_dinheiro = float(df["dinheiro"].sum())
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Candidaturas", inteiro(total_candidaturas))
-    m2.metric(rotulo_dinheiro, reais(total_dinheiro))
-    m3.metric("UFs", inteiro(df["sg_uf"].nunique()))
+    m2.metric(rotulo_dinheiro, reais_curto(total_dinheiro), help=f"Valor exato: {reais(total_dinheiro)}")
+    m3.metric(
+        "Média por candidatura",
+        reais(total_dinheiro / total_candidaturas),
+        help="Dinheiro do recorte dividido pela quantidade de candidaturas, contando quem declarou zero.",
+    )
+    fatias = mulheres_negras(df)
+    if fatias is None:
+        m4.metric(
+            "Mulheres negras: % do dinheiro",
+            "—",
+            help="Não há mulheres pretas ou pardas no recorte filtrado.",
+        )
+    else:
+        pct_candidaturas, pct_dinheiro = fatias
+        m4.metric(
+            "Mulheres negras: % do dinheiro",
+            f"{ponto(pct_dinheiro, 1)}%",
+            delta=f"{ponto(pct_dinheiro - pct_candidaturas, 1, sinal=True)} p.p. vs. candidaturas",
+            help=(
+                f"Mulheres pretas e pardas (população negra, pelo critério do IBGE) são "
+                f"{ponto(pct_candidaturas, 1)}% das candidaturas e recebem "
+                f"{ponto(pct_dinheiro, 1)}% do dinheiro. Negativo: elas concorrem mais do que recebem."
+            ),
+        )
+    st.caption(f"Recorte com {inteiro(df['sg_uf'].nunique())} UF(s). Use a barra lateral para filtrar.")
 
     genero = ordenar(comparar(df, "ds_genero"), "ds_genero", ORDEM_GENERO)
     raca = ordenar(comparar(df, "ds_cor_raca"), "ds_cor_raca", ORDEM_RACA)
