@@ -12,7 +12,7 @@ O tema escolhido é **Representatividade Política e Financiamento Eleitoral**. 
 
 A pergunta do trabalho compara quem se candidata (gênero, raça, cargo, partido e UF) com o dinheiro declarado na prestação de contas. O valor analítico está nessa diferença: a fatia das candidaturas de um grupo e a fatia do recurso que esse grupo declara.
 
-O repositório oficial é [https://github.com/VKzinhon/Big-Data-TSE](https://github.com/VKzinhon/Big-Data-TSE).
+O repositório oficial é [https://github.com/JPedro-Santana/Big-Data-TSE].
 
 ## 2. O que foi pedido
 

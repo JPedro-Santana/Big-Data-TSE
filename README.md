@@ -324,7 +324,7 @@ Para conferir a carga (as três tabelas existem, as somas de `perfil` fecham com
 
 ## Painel
 
-Painel publicado: *link do Streamlit Cloud (entra em 21/11)*
+Painel publicado: https://big-data-tse-trabalho.streamlit.app/
 
 Para rodar localmente, com o serviço da Aiven em Running e o `.env` na raiz:
 
@@ -354,7 +354,6 @@ Fora do desenho, por decisão de escopo:
 
 Em andamento até a entrega final (26/11):
 
-* Publicação do painel no Streamlit Cloud.
 * Gráfico cruzando gênero × raça e drill-down de estado para município.
 * Ajuste da documentação da coluna `ds_situacao_candidatura`.
 * Roteiro da apresentação.
