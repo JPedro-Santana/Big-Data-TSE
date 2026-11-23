@@ -127,6 +127,37 @@ def base(cargo: str, coluna_dinheiro: str) -> pd.DataFrame:
         return pd.read_sql(text(sql), conexao, params=params)
 
 
+@st.cache_data(ttl=300, show_spinner="Lendo os municípios...")
+def base_municipios(cargo: str, coluna_dinheiro: str, uf: str) -> pd.DataFrame:
+    """Mesma agregação da base(), mas por município de uma UF (drill-down)."""
+    if coluna_dinheiro not in DINHEIRO.values():
+        raise ValueError(coluna_dinheiro)
+    filtro = "WHERE c.sg_uf = :uf"
+    params: dict = {"uf": uf}
+    if cargo != "Todos":
+        filtro += " AND c.ds_cargo = :cargo"
+        params["cargo"] = cargo
+    sql = f"""
+        SELECT c.nm_ue, c.ds_genero, c.ds_cor_raca,
+               CASE
+                   WHEN c.nr_idade_data_posse IS NULL THEN 'SEM INFORMAÇÃO'
+                   WHEN c.nr_idade_data_posse < 30 THEN 'ATÉ 29 ANOS'
+                   WHEN c.nr_idade_data_posse < 40 THEN '30 A 39 ANOS'
+                   WHEN c.nr_idade_data_posse < 50 THEN '40 A 49 ANOS'
+                   WHEN c.nr_idade_data_posse < 60 THEN '50 A 59 ANOS'
+                   ELSE '60 ANOS OU MAIS'
+               END AS faixa_etaria,
+               COUNT(*) AS candidaturas,
+               COALESCE(SUM(f.{coluna_dinheiro}), 0) AS dinheiro
+        FROM candidatura c
+        JOIN financiamento f ON f.sq_candidato = c.sq_candidato
+        {filtro}
+        GROUP BY c.nm_ue, c.ds_genero, c.ds_cor_raca, faixa_etaria
+    """
+    with conectar().connect() as conexao:
+        return pd.read_sql(text(sql), conexao, params=params)
+
+
 def opcoes(df: pd.DataFrame, coluna: str, ordem: list[str]) -> list[str]:
     presentes = set(df[coluna].dropna().astype(str))
     return [nome for nome in ordem if nome in presentes] + sorted(presentes - set(ordem))
@@ -240,6 +271,126 @@ def grafico(grupo: pd.DataFrame, coluna: str, titulo: str) -> alt.Chart:
     )
 
 
+def mapa_cruzado(df: pd.DataFrame) -> alt.LayerChart:
+    """Gênero × raça: cada quadrado mostra quanto o grupo recebe a mais ou a menos
+    do que a sua fatia nas candidaturas (em pontos percentuais)."""
+    total_candidaturas = float(df["candidaturas"].sum())
+    total_dinheiro = float(df["dinheiro"].sum())
+    grupo = (
+        df.groupby(["ds_genero", "ds_cor_raca"], dropna=False)
+        .agg(candidaturas=("candidaturas", "sum"), dinheiro=("dinheiro", "sum"))
+        .reset_index()
+    )
+    grupo["ds_genero"] = grupo["ds_genero"].astype("string").fillna("SEM INFORMACAO")
+    grupo["ds_cor_raca"] = grupo["ds_cor_raca"].astype("string").fillna("SEM INFORMACAO")
+    grupo["pct_candidaturas"] = (
+        grupo["candidaturas"] / total_candidaturas * 100 if total_candidaturas else 0.0
+    )
+    grupo["pct_dinheiro"] = grupo["dinheiro"] / total_dinheiro * 100 if total_dinheiro else 0.0
+    grupo["diferenca"] = grupo["pct_dinheiro"] - grupo["pct_candidaturas"]
+    # Arredonda antes de escrever, para não aparecer "-0,0" em grupos minúsculos.
+    grupo["rotulo"] = grupo["diferenca"].round(1).map(
+        lambda valor: "0,0" if valor == 0 else ponto(valor, 1, sinal=True)
+    )
+
+    generos = opcoes(grupo, "ds_genero", ORDEM_GENERO)
+    racas = opcoes(grupo, "ds_cor_raca", ORDEM_RACA)
+    limite = max(float(grupo["diferenca"].abs().max()), 0.1)
+
+    base_grafico = alt.Chart(grupo).encode(
+        x=alt.X("ds_cor_raca:N", title=None, sort=racas, axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("ds_genero:N", title=None, sort=generos),
+    )
+    quadrados = base_grafico.mark_rect().encode(
+        color=alt.Color(
+            "diferenca:Q",
+            title="Diferença (p.p.)",
+            scale=alt.Scale(scheme="redblue", domain=[-limite, limite]),
+        ),
+        tooltip=[
+            alt.Tooltip("ds_genero:N", title="Gênero"),
+            alt.Tooltip("ds_cor_raca:N", title="Raça"),
+            alt.Tooltip("pct_candidaturas:Q", title="% candidaturas", format=".1f"),
+            alt.Tooltip("pct_dinheiro:Q", title="% dinheiro", format=".1f"),
+            alt.Tooltip("diferenca:Q", title="Diferença (p.p.)", format="+.1f"),
+        ],
+    )
+    numeros = base_grafico.mark_text(fontSize=13).encode(text="rotulo:N")
+    return (quadrados + numeros).properties(
+        title="Gênero × raça: dinheiro menos candidaturas (p.p.)",
+        height=alt.Step(46),
+    )
+
+
+def tabela_municipios(df: pd.DataFrame, rotulo_dinheiro: str) -> pd.DataFrame:
+    """Uma linha por município, com a fatia de mulheres nas candidaturas e no dinheiro."""
+    mulher = df["ds_genero"] == "FEMININO"
+    por_municipio = df.assign(
+        cand_mulheres=df["candidaturas"].where(mulher, 0),
+        dinheiro_mulheres=df["dinheiro"].where(mulher, 0),
+    ).groupby("nm_ue", dropna=False)[
+        ["candidaturas", "dinheiro", "cand_mulheres", "dinheiro_mulheres"]
+    ].sum()
+    por_municipio = por_municipio[por_municipio["candidaturas"] > 0]
+    pct_cand = por_municipio["cand_mulheres"] / por_municipio["candidaturas"] * 100
+    pct_din = (
+        por_municipio["dinheiro_mulheres"]
+        / por_municipio["dinheiro"].where(por_municipio["dinheiro"] > 0)
+        * 100
+    )
+    saida = pd.DataFrame(
+        {
+            "Município": por_municipio.index.astype(str),
+            "Candidaturas": por_municipio["candidaturas"].astype(int),
+            f"{rotulo_dinheiro} (R$)": por_municipio["dinheiro"].astype(float).round(2),
+            "Mulheres: % candidaturas": pct_cand.round(1),
+            "Mulheres: % dinheiro": pct_din.round(1),
+            "Diferença (p.p.)": (pct_din - pct_cand).round(1),
+        }
+    )
+    return saida.sort_values("Candidaturas", ascending=False)
+
+
+def detalhar_municipios(
+    cargo: str, rotulo_dinheiro: str, ufs_no_recorte: list[str], escolhas: dict[str, list[str]]
+) -> None:
+    st.subheader("Detalhar um estado por município")
+    st.caption(
+        "Escolha um estado para descer do nível estadual para os municípios. "
+        "Os filtros da barra lateral (gênero, raça e faixa etária) continuam valendo."
+    )
+    uf = st.selectbox("Estado", ["—", *ufs_no_recorte], key="drill_uf")
+    if uf == "—":
+        return
+    try:
+        municipios = base_municipios(cargo, DINHEIRO[rotulo_dinheiro], uf)
+    except Exception:
+        st.error("Não foi possível ler os municípios desse estado agora.")
+        return
+    sem_uf = {coluna: valores for coluna, valores in escolhas.items() if coluna != "sg_uf"}
+    municipios = aplicar_filtros(municipios, sem_uf)
+    if municipios.empty:
+        st.warning("Nenhuma candidatura nesse estado com os filtros atuais.")
+        return
+    tabela = tabela_municipios(municipios, rotulo_dinheiro)
+    st.caption(
+        f"{inteiro(len(tabela))} município(s) em {uf}. Diferença negativa: as mulheres "
+        "concorrem mais do que recebem naquele município. Clique no título de uma coluna para ordenar."
+    )
+    st.dataframe(
+        tabela,
+        hide_index=True,
+        width="stretch",
+        # "localized" usa o formato do navegador (no Brasil: 1.234.567,89) e
+        # mantém os números como números, então a ordenação por coluna funciona.
+        column_config={
+            coluna: st.column_config.NumberColumn(format="localized")
+            for coluna in tabela.columns
+            if coluna != "Município"
+        },
+    )
+
+
 def ponto(valor: float, casas: int, sinal: bool = False) -> str:
     texto = f"{valor:+.{casas}f}" if sinal else f"{valor:.{casas}f}"
     return texto.replace(".", ",")
@@ -278,11 +429,15 @@ def main() -> None:
 
     try:
         df = base(cargo, DINHEIRO[rotulo_dinheiro])
-    except Exception:
+    except Exception as erro:
         st.error(
             "O banco não respondeu. Na Aiven, o serviço precisa estar Running, "
             "e o arquivo .env precisa estar na raiz do projeto."
         )
+        # Só o tipo do erro, nunca a mensagem (que pode trazer o endereço do banco).
+        # RuntimeError: DATABASE_URL não chegou ao painel (.env ou Secrets).
+        # OperationalError: o banco não atendeu (serviço desligado na Aiven).
+        st.caption(f"Detalhe técnico: {type(erro).__name__}")
         st.stop()
 
     escolhas = filtros_laterais(df)
@@ -328,6 +483,11 @@ def main() -> None:
 
     st.altair_chart(grafico(genero, "ds_genero", "Gênero"), width="stretch")
     st.altair_chart(grafico(raca, "ds_cor_raca", "Raça"), width="stretch")
+    st.altair_chart(mapa_cruzado(df), width="stretch")
+    st.caption(
+        "Azul: o grupo recebe uma fatia do dinheiro maior que a sua fatia nas candidaturas. "
+        "Vermelho: recebe menos. Passe o mouse num quadrado para ver as duas porcentagens."
+    )
 
     if cargo == "Todos":
         por_cargo = ordenar(comparar(df, "ds_cargo"), "ds_cargo", ORDEM_CARGO)
@@ -347,6 +507,9 @@ def main() -> None:
         tabela(genero, "ds_genero", "Gênero", rotulo_dinheiro)
     with direita:
         tabela(raca, "ds_cor_raca", "Raça", rotulo_dinheiro)
+
+    ufs_no_recorte = sorted(df["sg_uf"].dropna().astype(str).unique())
+    detalhar_municipios(cargo, rotulo_dinheiro, ufs_no_recorte, escolhas)
 
     st.caption("Fonte: Portal de Dados Abertos do TSE, eleições 2024. O painel lê o PostgreSQL na Aiven.")
 
