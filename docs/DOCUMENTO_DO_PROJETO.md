@@ -234,7 +234,7 @@ A carga está em [etl/carregar.py](../etl/carregar.py), chamada por `etl/03_load
 
 Há um índice em `candidatura (sg_uf, ds_cargo, ds_genero, ds_cor_raca)` para essa leitura. O painel atual consulta `candidatura` e `financiamento` direto e agrega na hora. A tabela `perfil` existe para a análise nesse grão e para a conferência de [validar_carga.py](../etl/validar_carga.py).
 
-`ds_situacao_candidatura` está descrita no README e em [TRATAMENTO.md](TRATAMENTO.md) como coluna guardada e ainda sem filtro de “apenas aptos”. Essa coluna não está em [etl/modelo.py](../etl/modelo.py), não está no Parquet e não está no `CREATE TABLE` de [etl/carregar.py](../etl/carregar.py). O manifesto lista as colunas reais de candidatura, e situação da candidatura não está entre elas. O filtro de aptos exige reprocessar a base.
+A situação da candidatura não está em `etl/modelo.py` , no Parquet nem no `CREATE TABLE` de `etl/carregar.py`. O README e o TRATAMENTO.md registram isso como limitação. O filtro de aptos exige reprocessar a base.
 
 ### 3.7 Infraestrutura e segurança
 
@@ -276,7 +276,7 @@ Estas regras transformam o microdado em indicador. Elas estão no código de tra
 10. **Indicador do painel.** Para cada grupo, a fatia de candidaturas é a quantidade do grupo dividida pelo total do recorte. A fatia do dinheiro é o valor do grupo dividido pelo total do recorte. A diferença, em pontos percentuais, é a fatia do dinheiro menos a fatia das candidaturas. Diferença negativa: o grupo concorre em proporção maior do que a do recurso que declara.
 11. **Leitura da chapa.** No recorte de todos os cargos, o painel registra que vice-prefeito aparece com quase nenhum dinheiro, porque a prestação da chapa costuma ser lançada no candidato a prefeito. Isso é aviso de leitura, não um filtro que apaga o vice.
 
-A regra “guardar situação da candidatura e filtrar aptos só na análise” foi escrita na documentação da fase 2. O código desta versão não a cumpre: a coluna não foi para a base. Ver a seção 5.
+A regra "guardar situação da candidatura e filtrar aptos só na análise", escrita na fase 2, não foi implementada. A documentação foi alinhada ao código e a ausência aparece como limitação. Ver a seção 5.
 
 ### 3.9 Painel
 
@@ -350,7 +350,7 @@ flowchart TD
 
 Itens abaixo são pendência explícita. Parte deles é fase seguinte do próprio guia. Parte é divergência entre o texto já escrito e o código.
 
-- **Situação da candidatura.** README e [TRATAMENTO.md](TRATAMENTO.md) dizem que `ds_situacao_candidatura` fica na tabela, sem filtro nesta fase. O código não grava essa coluna. “Apenas aptos” não pode ser aplicado em cima da base atual.
+- **Situação da candidatura.** O código não grava essa coluna, e a documentação agora diz isso. O painel conta todas as candidaturas registradas. "Apenas aptos" exige reprocessar a base.
 - **Pasta do dashboard.** O guia pede código em `/dashboard`. Essa pasta está vazia, com placeholder. O app funciona em `painel/` e só em `localhost:8501`. Não há publicação em Streamlit Cloud, Render, Vercel ou Grafana, e portanto não há link público para a entrega final.
 - **Interatividade pedida no guia.** Faltam filtro de UF ou região, filtro de gênero, filtro de raça e filtro de faixa etária. O ano é único (2024), então um seletor de ano não muda o recorte enquanto a base for só este pleito. Falta o cruzamento gênero × raça na mesma tela. Falta drill-down (por exemplo, do estado para o município, ou do grupo para o cargo). O topo tem três métricas. O guia pede no mínimo quatro KPIs.
 - **Textos defasados.** O final do README e a seção final de [TRATAMENTO.md](TRATAMENTO.md) ainda dizem que o dashboard e as métricas de gênero e raça ficam para a fase seguinte. A seção Painel do README e o `painel/app.py` já existem. O retrato atual é este arquivo.
@@ -360,5 +360,5 @@ Itens abaixo são pendência explícita. Parte deles é fase seguinte do própri
 ## 6. Como ler os outros arquivos
 
 - [README.md](../README.md): como reproduzir tratamento, Terraform, carga e painel.
-- [TRATAMENTO.md](TRATAMENTO.md): dicionário da fase 2. A coluna `ds_situacao_candidatura` ali descrita não está na base gerada pelo código atual. O parágrafo final, sobre dashboard ainda não feito, também está atrás do `painel/app.py`.
+- [TRATAMENTO.md] (TRATAMENTO.md): dicionário da fase 2, alinhado ao código. A situação da candidatura aparece como fora da base.
 - [LGPD.md](LGPD.md): lista de colunas pessoais e o que permanece.
