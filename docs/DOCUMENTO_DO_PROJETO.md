@@ -234,7 +234,7 @@ A carga está em [etl/carregar.py](../etl/carregar.py), chamada por `etl/03_load
 
 Há um índice em `candidatura (sg_uf, ds_cargo, ds_genero, ds_cor_raca)` para essa leitura. O painel atual consulta `candidatura` e `financiamento` direto e agrega na hora. A tabela `perfil` existe para a análise nesse grão e para a conferência de [validar_carga.py](../etl/validar_carga.py).
 
-A situação da candidatura não está em `etl/modelo.py` , no Parquet nem no `CREATE TABLE` de `etl/carregar.py`. O README e o TRATAMENTO.md registram isso como limitação. O filtro de aptos exige reprocessar a base.
+A situação da candidatura não está em `etl/modelo.py`, no Parquet nem no `CREATE TABLE` de `etl/carregar.py`. O README e o TRATAMENTO.md registram isso como limitação. O filtro de aptos exige reprocessar a base.
 
 ### 3.7 Infraestrutura e segurança
 
@@ -360,5 +360,5 @@ Itens abaixo são pendência explícita. Parte deles é fase seguinte do própri
 ## 6. Como ler os outros arquivos
 
 - [README.md](../README.md): como reproduzir tratamento, Terraform, carga e painel.
-- [TRATAMENTO.md] (TRATAMENTO.md): dicionário da fase 2, alinhado ao código. A situação da candidatura aparece como fora da base.
+- [TRATAMENTO.md](TRATAMENTO.md): dicionário da fase 2, alinhado ao código. A situação da candidatura aparece como fora da base.
 - [LGPD.md](LGPD.md): lista de colunas pessoais e o que permanece.
