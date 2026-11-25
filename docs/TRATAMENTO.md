@@ -37,7 +37,7 @@ O grão é **uma linha por `SQ_CANDIDATO`**. As duas tabelas têm a mesma quanti
 5. **Lançamento sem candidatura na UF não entra na base.** A contagem vai para o `manifest.json` (`receitas_sem_candidato`, `despesas_sem_candidato`).
 6. **Marcadores do TSE viram nulo.** `#NULO#`, `#NULO`, `#NE#`, `#NE` e `-1` nas colunas de texto. Idade negativa ou nula não vira zero.
 7. **Categorias em maiúsculas.** Gênero, raça, cargo, partido, UF, situação e resultado, para o mesmo rótulo não se partir em dois.
-8. **Situação da candidatura não é filtro desta fase.** `ds_situacao_candidatura` fica na tabela. O recorte "apenas aptos" é regra de análise da fase seguinte, e apagar o registro agora impediria essa escolha.
+8. **Situação da candidatura fora da base.** A coluna não é gravada nesta versão. O painel conta todas as candidaturas registradas. Filtrar só as aptas exige reprocessar a base.
 9. **LGPD antes de gravar.** Colunas de CPF, CNPJ, e-mail, título, nascimento e nome de doador ou fornecedor são removidas. Detalhe em [LGPD.md](LGPD.md).
 10. **Leitura em blocos na prestação de contas.** Receitas e despesas são agregadas em chunks de 200 mil linhas. A base analítica cabe no disco de 1 GB do plano gratuito. O microdado bruto, não.
 
@@ -68,7 +68,6 @@ Não há tabela de lançamento. Cada doação deixaria de caber no plano gratuit
 | `nm_partido` | `TEXT` | `NM_PARTIDO` |
 | `ds_genero` | `TEXT` | `DS_GENERO` |
 | `ds_cor_raca` | `TEXT` | `DS_COR_RACA` |
-| `ds_situacao_candidatura` | `TEXT` | `DS_SITUACAO_CANDIDATURA` |
 | `ds_sit_tot_turno` | `TEXT` | `DS_SIT_TOT_TURNO` |
 | `nr_turno_resultado` | `SMALLINT` | maior `NR_TURNO` mantido |
 | `nr_idade_data_posse` | `SMALLINT` | `NR_IDADE_DATA_POSSE` quando o arquivo traz a coluna. No layout de 2024 ela não vem em `consulta_cand`; a idade é calculada em 1º de janeiro do ano seguinte à eleição a partir de `DT_NASCIMENTO`, e a data é descartada em seguida |
