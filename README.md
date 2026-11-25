@@ -325,6 +325,8 @@ Para conferir a carga (as três tabelas existem, as somas de `perfil` fecham com
 
 Painel publicado: https://big-data-tse-trabalho.streamlit.app/
 
+O painel consulta o PostgreSQL da Aiven a cada uso: os números vêm do banco na hora, sem arquivo intermediário.
+
 Para rodar localmente, com o serviço da Aiven em Running e o `.env` na raiz:
 
 ```powershell
@@ -333,16 +335,108 @@ Para rodar localmente, com o serviço da Aiven em Running e o `.env` na raiz:
 
 Abre em http://localhost:8501. O painel lê `candidatura` e `financiamento` e agrega na hora. O cache da consulta dura cinco minutos.
 
+### Interface
+
+```mermaid
+flowchart LR
+  lateral["Barra lateral: filtros cruzados<br/>Ano 2024 · Região · Estado<br/>Gênero · Raça/cor · Faixa etária"]
+  subgraph principal["Área principal, de cima para baixo"]
+    direction TB
+    topo["Seletores: Cargo e Dinheiro<br/>receita ou despesa contratada"]
+    kpis["4 indicadores<br/>candidaturas · dinheiro · média · mulheres negras"]
+    graficos["Gráficos de gênero, raça e cargo<br/>fatia das candidaturas x fatia do dinheiro"]
+    mapa["Mapa gênero x raça<br/>diferença em pontos percentuais"]
+    tabelas["Tabelas do recorte"]
+    drill["Detalhar um estado por município"]
+    topo --> kpis --> graficos --> mapa --> tabelas --> drill
+  end
+  lateral -->|"filtra todos os blocos"| principal
+```
+
 O que a tela oferece:
 
-* **Quatro KPIs no topo:** quantidade de candidaturas, total do dinheiro escolhido, média por candidatura (contando quem declarou zero) e a fatia do dinheiro que vai para mulheres negras, com a diferença em pontos percentuais em relação à fatia delas nas candidaturas.
 * **Seletor de cargo:** todos, vereador, prefeito ou vice-prefeito.
-* **Seletor de métrica:** receita ou despesa contratada. Os gráficos trocam a série do dinheiro conforme a escolha.
+* **Seletor de dinheiro:** receita ou despesa contratada. Indicadores, gráficos e tabelas trocam a série conforme a escolha.
 * **Filtros cruzados na barra lateral:** ano (fixo em 2024), região, estado, gênero, raça e faixa etária. Todos valem ao mesmo tempo.
+* **Quatro indicadores no topo**, descritos abaixo.
 * **Gráficos de gênero, raça e cargo:** barras comparando a fatia das candidaturas (azul) com a fatia do dinheiro (laranja).
-* **Tabelas do recorte:** quantidade, valor em reais, os dois percentuais e a diferença em pontos percentuais.
+* **Mapa gênero x raça:** cada quadrado mostra a diferença, em pontos percentuais, entre a fatia do dinheiro e a fatia das candidaturas daquele grupo. Azul: o grupo recebe mais do que concorre. Vermelho: recebe menos.
+* **Tabelas do recorte:** quantidade, valor em reais, os dois percentuais e a diferença em pontos percentuais, por gênero e por raça.
+* **Detalhamento por município (drill-down):** ao escolher um estado, uma tabela mostra cada município com a fatia de mulheres nas candidaturas e no dinheiro. Os filtros de gênero, raça e faixa etária continuam valendo, e a tabela ordena por qualquer coluna.
+* **Aviso de erro com diagnóstico:** se o banco não responder, o painel mostra o tipo do erro. `RuntimeError` indica que a `DATABASE_URL` não chegou ao painel. `OperationalError` indica que o serviço da Aiven não atendeu.
 
-Scripts anteriores de exploração, úteis para inspecionar o CSV cru: `etl/inspect_sample.py`, `etl/validar_merge.py` e `etl/01_explore.py`. Eles não gravam a base tratada.
+### Os 4 indicadores
+
+Todos são calculados sobre o recorte escolhido nos seletores e filtros. "Dinheiro" é a receita ou a despesa contratada, conforme o seletor.
+
+|Indicador|O que mede|Como é calculado|Valor no recorte completo (receita)|
+|-|-|-|-|
+|Candidaturas|Quantas candidaturas entram no recorte|Contagem de linhas de `candidatura`|463.677|
+|Receita ou despesa contratada|Quanto dinheiro foi declarado no recorte|Soma de `vr_receita` ou `vr_despesa_contratada` de `financiamento`|R$ 7,04 bilhões|
+|Média por candidatura|Quanto cada candidatura movimentou, em média|Dinheiro do recorte dividido pelo número de candidaturas, contando quem declarou zero|R$ 15.187,88|
+|Mulheres negras: % do dinheiro|A fatia do dinheiro que foi para mulheres pretas e pardas e a distância até a fatia delas nas candidaturas|Dinheiro de candidaturas com gênero feminino e raça preta ou parda, dividido pelo dinheiro do recorte. A seta mostra essa fatia menos a fatia delas nas candidaturas, em pontos percentuais|11,8% do dinheiro, 5,9 p.p. abaixo dos 17,7% das candidaturas|
+
+O quarto indicador é o central do trabalho: ele junta gênero (ODS 5) e raça (ODS 18) num único número. População negra segue o critério do IBGE, soma de pretos e pardos.
+
+### Implantação do painel
+
+O painel roda no Streamlit Community Cloud, ligado a este repositório no GitHub. Cada commit na `main` atualiza o painel publicado.
+
+1. Em share.streamlit.io, entrar com a conta do GitHub dona do repositório. O Streamlit exige permissão de administrador no repositório para publicar.
+2. **Create app**: repositório `Big-Data-TSE`, branch `main`, arquivo principal `dashboard/painel/app.py`, versão padrão do Python (3.12).
+3. Em **Advanced settings → Secrets**, uma linha no formato TOML, com aspas retas:
+
+   ```toml
+   DATABASE_URL = "postgres://avnadmin:SENHA@HOST:PORTA/defaultdb?sslmode=require"
+   ```
+
+   O Streamlit expõe essa chave como variável de ambiente, e o painel a lê do mesmo jeito que lê o `.env` local. A senha nunca entra no repositório.
+4. **Deploy.** As dependências vêm do `requirements.txt`.
+5. Depois de trocar um Secret, usar **Manage app → Reboot app**. A conexão com o banco fica em cache e só é refeita depois de reiniciar.
+
+Infraestrutura complementar:
+
+* O Streamlit Community Cloud não tem provider de Terraform. A configuração dele fica versionada no próprio repositório: `requirements.txt` (dependências), `.streamlit/config.toml` (configuração do servidor) e `.devcontainer/devcontainer.json` (ambiente de desenvolvimento gerado pelo Streamlit).
+* O banco não precisou de mudança no Terraform. O serviço da Aiven já aceita conexão pública com SSL obrigatório, então o Streamlit Cloud se conecta direto.
+* O plano gratuito da Aiven desliga o serviço depois de um tempo sem uso, e o app gratuito do Streamlit hiberna. Antes de usar o painel, conferir se o serviço está em Running e, se o painel mostrar a tela de hibernação, clicar para acordá-lo.
+
+## Análise crítica dos resultados (ODS 5 e ODS 18)
+
+A análise mostra que as candidaturas de mulheres e de pessoas negras existem em bom número, mas o dinheiro de campanha não acompanha. A distância cresce de uma etapa para a outra: candidatura, dinheiro e eleição. Valores de receita, recorte completo de 2024.
+
+|Grupo|% das candidaturas|% da receita|Diferença (p.p.)|
+|-|-|-|-|
+|Homens brancos|30,7|45,6|+14,9|
+|Homens pardos|26,8|23,3|−3,5|
+|Mulheres brancas|16,1|13,7|−2,4|
+|Mulheres pardas|13,5|8,3|−5,2|
+|Homens pretos|7,1|4,6|−2,5|
+|Mulheres pretas|4,2|3,4|−0,7|
+
+**ODS 5, igualdade de gênero.**
+
+* Mulheres são 34,3% das candidaturas e recebem 25,7% da receita. Em média, uma candidatura feminina declarou R$ 11.390, contra R$ 17.174 de uma masculina.
+* A cota de 30% é cumprida no papel: mulheres são 35,4% das candidaturas a vereador. A cota garante a vaga na chapa, mas não garante dinheiro.
+* Entre os eleitos, as mulheres caem para 17,9%. Quem recebe menos dinheiro chega menos ao eleitor e se elege menos.
+
+**ODS 18, igualdade étnico-racial.**
+
+* Pessoas brancas são 46,8% das candidaturas e ficam com 59,3% da receita. Pardos (40,3% contra 31,6%) e pretos (11,3% contra 8,1%) recebem menos do que concorrem.
+* O único grupo que recebe bem mais do que a sua fatia é o de homens brancos (+14,9 p.p.). O maior prejuízo é o de mulheres pardas (−5,2 p.p.).
+
+**Onde gênero e raça se cruzam.**
+
+* Mulheres negras são 17,7% das candidaturas, recebem 11,8% do dinheiro e são 7,2% dos eleitos. A desigualdade aumenta a cada etapa.
+* A média por candidatura de mulheres negras foi de R$ 10.114, contra R$ 16.276 das demais candidaturas.
+* A diferença varia muito entre estados. As maiores distâncias para mulheres negras ficaram em Sergipe (−12,0 p.p.), Mato Grosso (−11,3 p.p.) e Espírito Santo (−10,9 p.p.). Roraima (+2,4 p.p.) e Mato Grosso do Sul (+0,3 p.p.) foram exceções.
+* O dinheiro também se concentra nos cargos maiores: prefeitos são 3,4% das candidaturas e ficam com 54,9% da receita. Mulheres são só 15,4% das candidaturas a prefeito (35,4% a vereador) e pessoas negras, 35,6% (52,6% a vereador). Essa concentração reforça a desigualdade.
+
+**Limites da análise.**
+
+* A base conta todas as candidaturas registradas, inclusive as indeferidas, porque a situação da candidatura não foi gravada.
+* Os valores são os declarados na prestação de contas. Dinheiro não declarado não aparece.
+* A análise mostra associação, não causa: receber menos dinheiro e se eleger menos andam juntos, mas outros fatores também pesam no resultado.
+* A porcentagem de eleitos vem da coluna de resultado da base (`ds_sit_tot_turno`) e não aparece no painel.
 
 ## Escopo e pendências
 
