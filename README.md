@@ -119,9 +119,7 @@ Código: `etl/02_transform.py` (a lógica está em `etl/transformar.py`).
 |Mesmo rótulo em maiúsculas e minúsculas|Gênero, raça, cargo, partido, UF e situação em maiúsculas|Evita partir a mesma categoria em duas|
 |Dados pessoais|Remover antes de gravar. Receitas e despesas são lidas só com chave e valor|O cruzamento não precisa de CPF. Nome de doador não entra na base analítica|
 |Volume do arquivo de contas|Agregar em blocos de 200 mil linhas com Pandas|Uma linha por candidatura cabe no plano gratuito. PySpark não muda o resultado nesse grão|
-|Situação da candidatura (apto, indeferido etc.)|Guardar a coluna, sem filtrar|O recorte "apenas aptos" é regra da análise seguinte|
-
-A saída é uma linha por `SQ_CANDIDATO`:
+|Situação da candidatura (apto, indeferido etc.)|Não entra na base nesta versão|O painel conta todas as candidaturas registradas. Filtrar só as aptaas exige reprocessar a base |
 
 * `etl/data_processed/candidatura.parquet`
 * `etl/data_processed/financiamento.parquet`
@@ -163,7 +161,6 @@ sg_partido    TEXT
 nm_partido    TEXT
 ds_genero     TEXT
 ds_cor_raca   TEXT
-ds_situacao_candidatura TEXT
 ds_sit_tot_turno        TEXT
 nr_turno_resultado      SMALLINT
 nr_idade_data_posse     SMALLINT
@@ -352,11 +349,7 @@ Fora do desenho, por decisão de escopo:
 * OpenSearch, GitHub Actions e série histórica. A base cobre só o pleito municipal de 2024.
 * `despesas_pagas`, porque a chave dessa base é `SQ_PRESTADOR_CONTAS` e o join com a candidatura não fecha.
 
-Em andamento até a entrega final (26/11):
-
-* Gráfico cruzando gênero × raça e drill-down de estado para município.
-* Ajuste da documentação da coluna `ds_situacao_candidatura`.
-* Roteiro da apresentação.
+Limitação conhecida: a situação da candidaturaa não foi gravada na base. Por isso o painel conta todas as candidaturas registradas, inclusive as indeferidas.
 
 O registro completo do que a disciplina pediu e do que foi entregue está em [docs/DOCUMENTO_DO_PROJETO.md](docs/DOCUMENTO_DO_PROJETO.md).
 
