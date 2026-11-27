@@ -1,32 +1,32 @@
-# LGPD ó dados pessoais nas bases do TSE
+# LGPD ‚Äî dados pessoais nas bases do TSE
 
-Os CSVs p˙blicos de candidatura e prestaÁ„o de contas de 2024 trazem identificadores que n„o s„o necess·rios para a pergunta do projeto (quem se candidata e como o dinheiro se distribui por gÍnero, raÁa e cargo).
+Os CSVs p√∫blicos de candidatura e presta√ß√£o de contas de 2024 trazem identificadores que n√£o s√£o necess√°rios para a pergunta do projeto (quem se candidata e como o dinheiro se distribui por g√™nero, ra√ßa e cargo).
 
-## Decis„o
+## Decis√£o
 
-Remover esses campos na transformaÁ„o, antes de gravar o parquet e antes de subir ao PostgreSQL. O cruzamento usa `SQ_CANDIDATO`, identificador da candidatura publicado pelo TSE, sem CPF.
+Remover esses campos na transforma√ß√£o, antes de gravar o parquet e antes de subir ao PostgreSQL. O cruzamento usa `SQ_CANDIDATO`, identificador da candidatura publicado pelo TSE, sem CPF.
 
 | Coluna | Onde aparece | Motivo |
 |---|---|---|
 | `NR_CPF_CANDIDATO` | Candidatos | CPF do candidato |
 | `NR_CPF_VICE_CANDIDATO` | Candidatos | CPF do vice |
-| `NR_TITULO_ELEITORAL_CANDIDATO` | Candidatos | TÌtulo de eleitor |
+| `NR_TITULO_ELEITORAL_CANDIDATO` | Candidatos | T√≠tulo de eleitor |
 | `DS_EMAIL` | Candidatos | Contato pessoal |
 | `DT_NASCIMENTO` | Candidatos | Data de nascimento |
 | `NR_CPF_CNPJ_DOADOR` | Receitas | CPF ou CNPJ de quem doou |
 | `NM_DOADOR`, `NM_DOADOR_RFB` | Receitas | Nome de quem doou |
 | `NR_CPF_CNPJ_FORNECEDOR` | Despesas | CPF ou CNPJ do fornecedor |
 | `NM_FORNECEDOR`, `NM_FORNECEDOR_RFB` | Despesas | Nome do fornecedor |
-| `NR_CNPJ_PRESTADOR_CONTA` | PrestaÁ„o de contas | CNPJ do prestador |
+| `NR_CNPJ_PRESTADOR_CONTA` | Presta√ß√£o de contas | CNPJ do prestador |
 
-A lista usada pelo cÛdigo est· em `etl/lgpd_columns.py`.
+A lista usada pelo c√≥digo est√° em `etl/lgpd_columns.py`.
 
 ## O que permanece
 
-O nome de urna (`NM_URNA_CANDIDATO`) permanece. … o nome p˙blico da campanha e a mÈtrica de representatividade n„o depende do nome civil. A idade na data da posse (`NR_IDADE_DATA_POSSE`) permanece no lugar da data de nascimento, para o recorte de faixa et·ria.
+O nome de urna (`NM_URNA_CANDIDATO`) permanece. √â o nome p√∫blico da campanha e a m√©trica de representatividade n√£o depende do nome civil. A idade na data da posse (`NR_IDADE_DATA_POSSE`) permanece no lugar da data de nascimento, para o recorte de faixa et√°ria.
 
-Receitas e despesas s„o lidas sÛ com a chave e o valor. Nome e documento de doador ou fornecedor n„o entram no DataFrame. A saÌda soma os valores por candidatura, ent„o o microdado do lanÁamento tambÈm n„o È armazenado.
+Receitas e despesas s√£o lidas s√≥ com a chave e o valor. Nome e documento de doador ou fornecedor n√£o entram no DataFrame. A sa√≠da soma os valores por candidatura, ent√£o o microdado do lan√ßamento tamb√©m n√£o √© armazenado.
 
 ## Base legal de trabalho
 
-Fonte: Portal de Dados Abertos do TSE. Uso acadÍmico, com minimizaÁ„o dos identificadores antes do armazenamento em nuvem.
+Fonte: Portal de Dados Abertos do TSE. Uso acad√™mico, com minimiza√ß√£o dos identificadores antes do armazenamento em nuvem.
