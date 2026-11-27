@@ -49,6 +49,21 @@ REGIOES = {
 
 # População negra segundo o IBGE: pessoas pretas e pardas.
 RACA_NEGRA = ["PRETA", "PARDA"]
+RACA_BRANCA = ["BRANCA"]
+
+# KPIs interseccionais: gênero cruzado com raça/cor.
+GRUPOS_KPI = [
+    ("Mulheres negras", "FEMININO", RACA_NEGRA),
+    ("Mulheres brancas", "FEMININO", RACA_BRANCA),
+    ("Homens negros", "MASCULINO", RACA_NEGRA),
+    ("Homens brancos", "MASCULINO", RACA_BRANCA),
+]
+
+METRICAS_GRAFICO = [
+    "% do total",
+    "Total (R$)",
+    "Média por candidatura",
+]
 
 DINHEIRO = {
     "Receita": "vr_receita",
@@ -166,12 +181,7 @@ def opcoes(df: pd.DataFrame, coluna: str, ordem: list[str]) -> list[str]:
 def filtros_laterais(df: pd.DataFrame) -> dict[str, list[str]]:
     """Filtros cruzados: todos valem juntos. Lista vazia quer dizer 'todos'."""
     st.sidebar.header("Filtros")
-    st.sidebar.selectbox(
-        "Ano",
-        ["2024"],
-        disabled=True,
-        help="A base tratada cobre só o pleito municipal de 2024.",
-    )
+    st.sidebar.info("Base: Eleições 2024")
     regioes = st.sidebar.multiselect("Região", list(REGIOES), placeholder="Todas")
     ufs_da_regiao = sorted(
         uf for regiao in (regioes or REGIOES) for uf in REGIOES[regiao]
@@ -203,18 +213,42 @@ def aplicar_filtros(df: pd.DataFrame, escolhas: dict[str, list[str]]) -> pd.Data
     return saida
 
 
-def mulheres_negras(df: pd.DataFrame) -> tuple[float, float] | None:
-    """Fatia das candidaturas e fatia do dinheiro de mulheres pretas e pardas."""
-    alvo = (df["ds_genero"] == "FEMININO") & df["ds_cor_raca"].isin(RACA_NEGRA)
+def cruzar_genero_raca(df: pd.DataFrame) -> pd.DataFrame:
+    """Agrega o recorte por gênero × raça, com fatias e diferença em p.p."""
     total_candidaturas = float(df["candidaturas"].sum())
     total_dinheiro = float(df["dinheiro"].sum())
-    if not alvo.any() or not total_candidaturas:
-        return None
-    pct_candidaturas = float(df.loc[alvo, "candidaturas"].sum()) / total_candidaturas * 100
-    pct_dinheiro = (
-        float(df.loc[alvo, "dinheiro"].sum()) / total_dinheiro * 100 if total_dinheiro else 0.0
+    grupo = (
+        df.groupby(["ds_genero", "ds_cor_raca"], dropna=False)
+        .agg(candidaturas=("candidaturas", "sum"), dinheiro=("dinheiro", "sum"))
+        .reset_index()
     )
-    return pct_candidaturas, pct_dinheiro
+    grupo["ds_genero"] = grupo["ds_genero"].astype("string").fillna("SEM INFORMACAO")
+    grupo["ds_cor_raca"] = grupo["ds_cor_raca"].astype("string").fillna("SEM INFORMACAO")
+    grupo["pct_candidaturas"] = (
+        grupo["candidaturas"] / total_candidaturas * 100 if total_candidaturas else 0.0
+    )
+    grupo["pct_dinheiro"] = grupo["dinheiro"] / total_dinheiro * 100 if total_dinheiro else 0.0
+    grupo["diferenca"] = grupo["pct_dinheiro"] - grupo["pct_candidaturas"]
+    return grupo
+
+
+def fatias_grupo(
+    df: pd.DataFrame, genero: str, racas: list[str]
+) -> tuple[float, float] | None:
+    """Fatia das candidaturas e fatia do dinheiro do cruzamento gênero × raça/cor."""
+    if df.empty:
+        return None
+    total_candidaturas = float(df["candidaturas"].sum())
+    if not total_candidaturas:
+        return None
+    cruzado = cruzar_genero_raca(df)
+    alvo = (cruzado["ds_genero"] == genero) & cruzado["ds_cor_raca"].isin(racas)
+    if not alvo.any():
+        return None
+    return (
+        float(cruzado.loc[alvo, "pct_candidaturas"].sum()),
+        float(cruzado.loc[alvo, "pct_dinheiro"].sum()),
+    )
 
 
 def comparar(df: pd.DataFrame, coluna: str) -> pd.DataFrame:
@@ -241,32 +275,63 @@ def ordenar(grupo: pd.DataFrame, coluna: str, ordem: list[str]) -> pd.DataFrame:
     return saida.sort_values(["_ord", coluna]).drop(columns="_ord")
 
 
-def grafico(grupo: pd.DataFrame, coluna: str, titulo: str) -> alt.Chart:
-    longo = grupo.melt(
-        id_vars=[coluna],
-        value_vars=["pct_candidaturas", "pct_dinheiro"],
-        var_name="serie",
-        value_name="percentual",
-    )
-    longo["serie"] = longo["serie"].map(
-        {"pct_candidaturas": "Candidaturas", "pct_dinheiro": "Dinheiro"}
+def grafico(grupo: pd.DataFrame, coluna: str, titulo: str, metrica: str) -> alt.Chart:
+    if metrica == "% do total":
+        longo = grupo.melt(
+            id_vars=[coluna],
+            value_vars=["pct_candidaturas", "pct_dinheiro"],
+            var_name="serie",
+            value_name="percentual",
+        )
+        longo["serie"] = longo["serie"].map(
+            {"pct_candidaturas": "Candidaturas", "pct_dinheiro": "Dinheiro"}
+        )
+        return (
+            alt.Chart(longo)
+            .mark_bar()
+            .encode(
+                y=alt.Y(f"{coluna}:N", title=None, sort=list(grupo[coluna])),
+                x=alt.X("percentual:Q", title="% do total"),
+                color=alt.Color("serie:N", title=None, scale=CORES),
+                yOffset="serie:N",
+                tooltip=[
+                    alt.Tooltip(f"{coluna}:N", title="Grupo"),
+                    alt.Tooltip("serie:N", title="Série"),
+                    alt.Tooltip("percentual:Q", title="%", format=".1f"),
+                ],
+            )
+            # Altura por barra (Step). Com altura total fixa, o Streamlit espremia
+            # o gráfico de gênero e o rótulo MASCULINO sumia por sobreposição.
+            .properties(title=titulo, height=alt.Step(20))
+        )
+
+    dados = grupo.copy()
+    if metrica == "Total (R$)":
+        dados["valor"] = dados["dinheiro"].astype(float)
+        titulo_eixo = "Total (R$)"
+        titulo_tooltip = "Total"
+    elif metrica == "Média por candidatura":
+        cand = dados["candidaturas"].astype(float)
+        dados["valor"] = (dados["dinheiro"].astype(float) / cand).where(cand > 0)
+        titulo_eixo = "Média por candidatura (R$)"
+        titulo_tooltip = "Média"
+    else:
+        raise ValueError(metrica)
+
+    dados["rotulo_valor"] = dados["valor"].map(
+        lambda valor: reais(float(valor)) if pd.notna(valor) else "—"
     )
     return (
-        alt.Chart(longo)
-        .mark_bar()
+        alt.Chart(dados)
+        .mark_bar(color="#F58518")
         .encode(
-            y=alt.Y(f"{coluna}:N", title=None, sort=list(grupo[coluna])),
-            x=alt.X("percentual:Q", title="% do total"),
-            color=alt.Color("serie:N", title=None, scale=CORES),
-            yOffset="serie:N",
+            y=alt.Y(f"{coluna}:N", title=None, sort=list(dados[coluna])),
+            x=alt.X("valor:Q", title=titulo_eixo, axis=alt.Axis(format=",.2f")),
             tooltip=[
                 alt.Tooltip(f"{coluna}:N", title="Grupo"),
-                alt.Tooltip("serie:N", title="Série"),
-                alt.Tooltip("percentual:Q", title="%", format=".1f"),
+                alt.Tooltip("rotulo_valor:N", title=titulo_tooltip),
             ],
         )
-        # Altura por barra (Step). Com altura total fixa, o Streamlit espremia
-        # o gráfico de gênero e o rótulo MASCULINO sumia por sobreposição.
         .properties(title=titulo, height=alt.Step(20))
     )
 
@@ -274,20 +339,7 @@ def grafico(grupo: pd.DataFrame, coluna: str, titulo: str) -> alt.Chart:
 def mapa_cruzado(df: pd.DataFrame) -> alt.LayerChart:
     """Gênero × raça: cada quadrado mostra quanto o grupo recebe a mais ou a menos
     do que a sua fatia nas candidaturas (em pontos percentuais)."""
-    total_candidaturas = float(df["candidaturas"].sum())
-    total_dinheiro = float(df["dinheiro"].sum())
-    grupo = (
-        df.groupby(["ds_genero", "ds_cor_raca"], dropna=False)
-        .agg(candidaturas=("candidaturas", "sum"), dinheiro=("dinheiro", "sum"))
-        .reset_index()
-    )
-    grupo["ds_genero"] = grupo["ds_genero"].astype("string").fillna("SEM INFORMACAO")
-    grupo["ds_cor_raca"] = grupo["ds_cor_raca"].astype("string").fillna("SEM INFORMACAO")
-    grupo["pct_candidaturas"] = (
-        grupo["candidaturas"] / total_candidaturas * 100 if total_candidaturas else 0.0
-    )
-    grupo["pct_dinheiro"] = grupo["dinheiro"] / total_dinheiro * 100 if total_dinheiro else 0.0
-    grupo["diferenca"] = grupo["pct_dinheiro"] - grupo["pct_candidaturas"]
+    grupo = cruzar_genero_raca(df)
     # Arredonda antes de escrever, para não aparecer "-0,0" em grupos minúsculos.
     grupo["rotulo"] = grupo["diferenca"].round(1).map(
         lambda valor: "0,0" if valor == 0 else ponto(valor, 1, sinal=True)
@@ -295,7 +347,7 @@ def mapa_cruzado(df: pd.DataFrame) -> alt.LayerChart:
 
     generos = opcoes(grupo, "ds_genero", ORDEM_GENERO)
     racas = opcoes(grupo, "ds_cor_raca", ORDEM_RACA)
-    limite = max(float(grupo["diferenca"].abs().max()), 0.1)
+    limite = max(float(grupo["diferenca"].abs().max()) if not grupo.empty else 0.0, 0.1)
 
     base_grafico = alt.Chart(grupo).encode(
         x=alt.X("ds_cor_raca:N", title=None, sort=racas, axis=alt.Axis(labelAngle=0)),
@@ -421,11 +473,13 @@ def main() -> None:
         "com a fatia do dinheiro declarado. Azul é gente. Laranja é recurso."
     )
 
-    filtro_cargo, filtro_dinheiro = st.columns(2)
+    filtro_cargo, filtro_dinheiro, filtro_metrica = st.columns(3)
     with filtro_cargo:
         cargo = st.selectbox("Cargo", ["Todos", *ORDEM_CARGO])
     with filtro_dinheiro:
         rotulo_dinheiro = st.selectbox("Dinheiro", list(DINHEIRO))
+    with filtro_metrica:
+        metrica_grafico = st.selectbox("Métrica do gráfico", METRICAS_GRAFICO)
 
     try:
         df = base(cargo, DINHEIRO[rotulo_dinheiro])
@@ -449,40 +503,37 @@ def main() -> None:
 
     total_candidaturas = float(df["candidaturas"].sum())
     total_dinheiro = float(df["dinheiro"].sum())
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Candidaturas", inteiro(total_candidaturas))
-    m2.metric(rotulo_dinheiro, reais_curto(total_dinheiro), help=f"Valor exato: {reais(total_dinheiro)}")
-    m3.metric(
-        "Média por candidatura",
-        reais(total_dinheiro / total_candidaturas),
-        help="Dinheiro do recorte dividido pela quantidade de candidaturas, contando quem declarou zero.",
+    cards = st.columns(4)
+    for card, (rotulo, genero, racas) in zip(cards, GRUPOS_KPI):
+        fatias = fatias_grupo(df, genero, racas)
+        if fatias is None:
+            card.metric(
+                f"{rotulo}: % do dinheiro",
+                "—",
+                help="Não há candidaturas desse cruzamento no recorte filtrado.",
+            )
+        else:
+            pct_candidaturas, pct_dinheiro = fatias
+            card.metric(
+                f"{rotulo}: % do dinheiro",
+                f"{ponto(pct_dinheiro, 1)}%",
+                delta=f"{ponto(pct_dinheiro - pct_candidaturas, 1, sinal=True)} p.p. vs. candidaturas",
+                help=(
+                    f"{rotulo} são {ponto(pct_candidaturas, 1)}% das candidaturas e recebem "
+                    f"{ponto(pct_dinheiro, 1)}% do dinheiro. Negativo: o grupo concorre mais do que recebe."
+                ),
+            )
+    st.caption(
+        f"Recorte com {inteiro(total_candidaturas)} candidaturas e {reais(total_dinheiro)} "
+        f"em {rotulo_dinheiro.lower()} ({inteiro(df['sg_uf'].nunique())} UF(s)). "
+        "Use a barra lateral para filtrar."
     )
-    fatias = mulheres_negras(df)
-    if fatias is None:
-        m4.metric(
-            "Mulheres negras: % do dinheiro",
-            "—",
-            help="Não há mulheres pretas ou pardas no recorte filtrado.",
-        )
-    else:
-        pct_candidaturas, pct_dinheiro = fatias
-        m4.metric(
-            "Mulheres negras: % do dinheiro",
-            f"{ponto(pct_dinheiro, 1)}%",
-            delta=f"{ponto(pct_dinheiro - pct_candidaturas, 1, sinal=True)} p.p. vs. candidaturas",
-            help=(
-                f"Mulheres pretas e pardas (população negra, pelo critério do IBGE) são "
-                f"{ponto(pct_candidaturas, 1)}% das candidaturas e recebem "
-                f"{ponto(pct_dinheiro, 1)}% do dinheiro. Negativo: elas concorrem mais do que recebem."
-            ),
-        )
-    st.caption(f"Recorte com {inteiro(df['sg_uf'].nunique())} UF(s). Use a barra lateral para filtrar.")
 
     genero = ordenar(comparar(df, "ds_genero"), "ds_genero", ORDEM_GENERO)
     raca = ordenar(comparar(df, "ds_cor_raca"), "ds_cor_raca", ORDEM_RACA)
 
-    st.altair_chart(grafico(genero, "ds_genero", "Gênero"), width="stretch")
-    st.altair_chart(grafico(raca, "ds_cor_raca", "Raça"), width="stretch")
+    st.altair_chart(grafico(genero, "ds_genero", "Gênero", metrica_grafico), width="stretch")
+    st.altair_chart(grafico(raca, "ds_cor_raca", "Raça", metrica_grafico), width="stretch")
     st.altair_chart(mapa_cruzado(df), width="stretch")
     st.caption(
         "Azul: o grupo recebe uma fatia do dinheiro maior que a sua fatia nas candidaturas. "
@@ -491,7 +542,7 @@ def main() -> None:
 
     if cargo == "Todos":
         por_cargo = ordenar(comparar(df, "ds_cargo"), "ds_cargo", ORDEM_CARGO)
-        st.altair_chart(grafico(por_cargo, "ds_cargo", "Cargo"), width="stretch")
+        st.altair_chart(grafico(por_cargo, "ds_cargo", "Cargo", metrica_grafico), width="stretch")
         st.info(
             "Vice-prefeito aparece com quase nenhum dinheiro. "
             "A prestação da chapa costuma ser lançada no candidato a prefeito."
