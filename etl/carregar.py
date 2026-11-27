@@ -95,6 +95,13 @@ GROUP BY c.sg_uf, c.ds_genero, c.ds_cor_raca, c.ds_cargo
 
 def recriar_tabelas(engine: Engine) -> None:
     with engine.begin() as conexao:
+        # As views do modelo estrela (etl/sql/modelo_estrela.sql) dependem das
+        # tabelas de origem e impediriam o DROP TABLE. Recrie-as depois da carga.
+        conexao.execute(text("DROP VIEW IF EXISTS fato_candidatura"))
+        conexao.execute(text("DROP VIEW IF EXISTS dim_local"))
+        conexao.execute(text("DROP VIEW IF EXISTS dim_partido"))
+        conexao.execute(text("DROP VIEW IF EXISTS dim_cargo"))
+        conexao.execute(text("DROP VIEW IF EXISTS dim_perfil"))
         conexao.execute(text("DROP TABLE IF EXISTS perfil"))
         conexao.execute(text("DROP TABLE IF EXISTS financiamento"))
         conexao.execute(text("DROP TABLE IF EXISTS candidatura"))
