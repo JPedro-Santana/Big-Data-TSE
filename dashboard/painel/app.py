@@ -181,7 +181,7 @@ def opcoes(df: pd.DataFrame, coluna: str, ordem: list[str]) -> list[str]:
 def filtros_laterais(df: pd.DataFrame) -> dict[str, list[str]]:
     """Filtros cruzados: todos valem juntos. Lista vazia quer dizer 'todos'."""
     st.sidebar.header("Filtros")
-    st.sidebar.info("Base: Eleições 2024")
+    st.sidebar.selectbox("Ano", [2024], disabled=True, help="A base contém apenas as Eleições 2024")
     regioes = st.sidebar.multiselect("Região", list(REGIOES), placeholder="Todas")
     ufs_da_regiao = sorted(
         uf for regiao in (regioes or REGIOES) for uf in REGIOES[regiao]
