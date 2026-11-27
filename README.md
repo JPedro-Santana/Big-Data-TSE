@@ -89,7 +89,7 @@ Características que mudaram o desenho:
 |V|Como aparece no projeto|
 |-|-|
 |Volume|Os CSVs brutos ocupam cerca de 5,7 GB e não cabem no disco de 1 GB do plano gratuito. O ETL reduz isso a 463.677 linhas por tabela e cerca de 14 MB de Parquet, com soma financeira por candidatura, corte de colunas e compressão colunar.|
-|Variedade|Três estruturas tabulares com grãos diferentes: cadastro da candidatura (uma ou duas linhas por pessoa, por causa do segundo turno), receitas e despesas contratadas (vários lançamentos por pessoa). O valor monetário chega como texto no padrão brasileiro.|
+|Variedade|Estruturado: três CSVs tabulares com grãos diferentes, o cadastro da candidatura (uma ou duas linhas por pessoa, por causa do segundo turno) e as receitas e despesas contratadas (vários lançamentos por pessoa), com o valor monetário chegando como texto no padrão brasileiro. Semiestruturado: o `manifest.json` que o ETL gera, com contagens por UF e as colunas removidas por LGPD. Não estruturado: os PDFs de leiaute que o TSE publica junto com os microdados, usados como documentação da fonte.|
 |Velocidade|Processamento em lote, a partir do download dos arquivos do pleito. Não há API contínua. A prestação de contas é lida em blocos de 200 mil linhas, UF por UF.|
 |Veracidade|A chave não passa por float. O segundo turno não duplica a candidatura. Sentinelas do TSE não viram categoria. Dinheiro usa decimal de centavos. A fixture sintética e `validar_carga.py` conferem grão, LGPD, idade e o fechamento das somas.|
 |Valor|O indicador compara a composição de quem concorre com a composição do recurso, por gênero e raça. É a leitura de equidade das ODS 5 e 18 aplicada ao dinheiro de campanha.|
@@ -127,7 +127,7 @@ A saída é uma linha por `SQ_CANDIDATO`:
 * `etl/data_processed/financiamento.parquet`
 * `etl/data_processed/manifest.json` com a contagem por UF
 
-O nome de urna permanece. É o nome público da campanha. A data de nascimento sai. O arquivo de candidaturas de 2024 não traz `NR_IDADE_DATA_POSSE`, então a idade é calculada em 1º de janeiro do ano seguinte à eleição e só esse número é gravado.
+O nome de urna (`nm_urna`) permanece. É o nome que o próprio candidato escolhe e registra para aparecer na urna e na propaganda, ou seja, um dado tornado manifestamente público pelo titular (LGPD, art. 7º, § 4º). Ele não é usado no painel, que agrega por grupo e nunca mostra candidatura individual. CPF, título de eleitor, e-mail, nome civil e data de nascimento saem antes do Parquet. O arquivo de candidaturas de 2024 não traz `NR_IDADE_DATA_POSSE`, então a idade é calculada em 1º de janeiro do ano seguinte à eleição e só esse número é gravado.
 
 Conferência da lógica, com CSV sintético no formato do TSE (não é a base oficial):
 
@@ -144,7 +144,7 @@ O banco é o PostgreSQL, relacional, no plano gratuito da Aiven. Os motivos:
 * **O dado é tabular.** Depois do tratamento, cada candidatura é uma linha com colunas fixas. Não há documento aninhado nem esquema variável.
 * **A chave é estável.** `sq_candidato` liga candidatura e financiamento em 1 para 1, com chave primária e chave estrangeira garantindo a integridade.
 * **A análise é agregação com join.** O indicador soma candidaturas e dinheiro por gênero, raça, cargo e UF. É o caso de uso típico de SQL.
-* **Cabe no plano gratuito.** A base tratada ocupa poucos megabytes, longe do limite de 1 GB.
+* **Cabe no plano gratuito.** O banco inteiro mede 169 MB (`pg_database_size`, medido em 27/11/2026), longe do limite de 1 GB. O modelo estrela é feito de views e não ocupa espaço extra.
 
 Um banco documental não acrescenta nada a esse grão. OpenSearch, opcional no guia, não foi provisionado: não há busca textual nem log semi-estruturado. Também não há tabela de lançamento. Cada doação estouraria o disco de 1 GB e guardaria dado pessoal de doador e fornecedor.
 
@@ -183,6 +183,69 @@ qt_candidaturas        INTEGER
 vr_receita             NUMERIC(16,2)
 vr_despesa_contratada  NUMERIC(16,2)
 ```
+
+### Modelo estrela (views)
+
+Para a análise, as tabelas da carga também são lidas como um modelo estrela. As cinco views abaixo ficam em [`etl/sql/modelo_estrela.sql`](etl/sql/modelo_estrela.sql). São views sobre `candidatura` e `financiamento`: não copiam dado, não ocupam disco e não mudam a carga nem o painel.
+
+```mermaid
+erDiagram
+  dim_local ||--o{ fato_candidatura : id_local
+  dim_partido ||--o{ fato_candidatura : id_partido
+  dim_cargo ||--o{ fato_candidatura : id_cargo
+  dim_perfil ||--o{ fato_candidatura : id_perfil
+  fato_candidatura {
+    bigint sq_candidato
+    int id_local
+    int id_partido
+    int id_cargo
+    int id_perfil
+    int qt_candidaturas
+    numeric vr_receita
+    numeric vr_despesa_contratada
+    int qt_receitas
+    int qt_despesas
+  }
+  dim_local {
+    int id_local
+    char sg_uf
+    text nm_municipio
+    text nm_regiao
+  }
+  dim_partido {
+    int id_partido
+    text sg_partido
+    text nm_partido
+  }
+  dim_cargo {
+    int id_cargo
+    text ds_cargo
+  }
+  dim_perfil {
+    int id_perfil
+    text ds_genero
+    text ds_cor_raca
+    text ds_faixa_etaria
+  }
+```
+
+|View|Grão|Conteúdo|
+|-|-|-|
+|`fato_candidatura`|uma linha por candidatura|Chaves das quatro dimensões e as medidas: quantidade (1 por linha), receita, despesa contratada e número de lançamentos|
+|`dim_local`|UF × município|Sigla da UF, município e região do IBGE|
+|`dim_partido`|partido|Sigla e nome|
+|`dim_cargo`|cargo|Vereador, prefeito ou vice-prefeito|
+|`dim_perfil`|gênero × raça/cor × faixa etária|O recorte interseccional do trabalho, com as mesmas faixas etárias do painel|
+
+As chaves das dimensões são geradas com `DENSE_RANK` sobre os atributos naturais. Conferência feita no banco: 463.677 linhas na fato, iguais às de candidatura e financiamento; somas de receita (R$ 7,04 bi) e despesa (R$ 6,40 bi) idênticas às da tabela financiamento; nenhuma chave nula ou sem par nas dimensões.
+
+Para criar ou recriar as views, com o `.env` apontando para o banco:
+
+```powershell
+psql "$env:DATABASE_URL" -f etl/sql/modelo_estrela.sql
+```
+
+A carga (`etl/03_load.py`) apaga e recria as tabelas de origem e, antes disso, apaga as cinco views. Depois de uma nova carga, rode este script de novo para recriá-las.
 
 ### Dicionário de dados
 
@@ -256,7 +319,9 @@ Estas regras transformam o microdado em indicador. Estão no tratamento, na carg
 |Ferramenta|Terraform `>= 1.5` e provider `aiven/aiven` `4.x`|
 |Arquivos|`terraform/main.tf`, `variables.tf`, `outputs.tf`|
 
-O recurso provisionado é um único serviço PostgreSQL, `pg-1f18e561` (`aiven_pg.tse`), com acesso público por SSL obrigatório. A carga (`etl/03_load.py`) apaga e recria as duas tabelas a cada execução, então rodar de novo substitui os dados sem duplicar.
+O recurso provisionado é um único serviço PostgreSQL, `pg-1f18e561` (`aiven_pg.tse`), com acesso público por SSL obrigatório.
+
+O `ip_filter` do Terraform libera qualquer endereço (`0.0.0.0/0` e `::/0`) de propósito. O painel roda no Streamlit Community Cloud, que não tem IP de saída fixo, então não há uma lista de IPs para restringir. A proteção fica em duas camadas: a conexão só é aceita com SSL (`sslmode=require`) e exige usuário e senha, que estão só no `.env` local e nos Secrets do Streamlit, nunca no Git. A carga (`etl/03_load.py`) apaga e recria as duas tabelas a cada execução, então rodar de novo substitui os dados sem duplicar.
 
 ## Segurança das informações
 
@@ -357,6 +422,7 @@ O que a tela oferece:
 
 * **Seletor de cargo:** todos, vereador, prefeito ou vice-prefeito.
 * **Seletor de dinheiro:** receita ou despesa contratada. Indicadores, gráficos e tabelas trocam a série conforme a escolha.
+* **Seletor de métrica (Total, % e Média):** troca o que os gráficos mostram entre o valor total em reais, a participação percentual do grupo e a média por candidatura.
 * **Filtros cruzados na barra lateral:** ano (fixo em 2024), região, estado, gênero, raça e faixa etária. Todos valem ao mesmo tempo.
 * **Quatro indicadores no topo**, descritos abaixo.
 * **Gráficos de gênero, raça e cargo:** barras comparando a fatia das candidaturas (azul) com a fatia do dinheiro (laranja).
@@ -371,12 +437,12 @@ Todos são calculados sobre o recorte escolhido nos seletores e filtros. "Dinhei
 
 |Indicador|O que mede|Como é calculado|Valor no recorte completo (receita)|
 |-|-|-|-|
-|Candidaturas|Quantas candidaturas entram no recorte|Contagem de linhas de `candidatura`|463.677|
-|Receita ou despesa contratada|Quanto dinheiro foi declarado no recorte|Soma de `vr_receita` ou `vr_despesa_contratada` de `financiamento`|R$ 7,04 bilhões|
-|Média por candidatura|Quanto cada candidatura movimentou, em média|Dinheiro do recorte dividido pelo número de candidaturas, contando quem declarou zero|R$ 15.187,88|
-|Mulheres negras: % do dinheiro|A fatia do dinheiro que foi para mulheres pretas e pardas e a distância até a fatia delas nas candidaturas|Dinheiro de candidaturas com gênero feminino e raça preta ou parda, dividido pelo dinheiro do recorte. A seta mostra essa fatia menos a fatia delas nas candidaturas, em pontos percentuais|11,8% do dinheiro, 5,9 p.p. abaixo dos 17,7% das candidaturas|
+|Mulheres negras: % do dinheiro|Fatia do dinheiro de mulheres pretas e pardas e a distância até a fatia delas nas candidaturas|Dinheiro de candidaturas com gênero feminino e raça preta ou parda, dividido pelo dinheiro do recorte. A seta mostra essa fatia menos a fatia nas candidaturas, em pontos percentuais|11,8% do dinheiro, 5,9 p.p. abaixo dos 17,7% das candidaturas|
+|Mulheres brancas: % do dinheiro|Idem, para mulheres brancas|Mesmo cálculo, com gênero feminino e raça branca|13,7% do dinheiro, 2,4 p.p. abaixo dos 16,1% das candidaturas|
+|Homens negros: % do dinheiro|Idem, para homens pretos e pardos|Mesmo cálculo, com gênero masculino e raça preta ou parda|27,9% do dinheiro, 6,0 p.p. abaixo dos 33,9% das candidaturas|
+|Homens brancos: % do dinheiro|Idem, para homens brancos|Mesmo cálculo, com gênero masculino e raça branca|45,6% do dinheiro, 14,9 p.p. acima dos 30,7% das candidaturas|
 
-O quarto indicador é o central do trabalho: ele junta gênero (ODS 5) e raça (ODS 18) num único número. População negra segue o critério do IBGE, soma de pretos e pardos.
+Os quatro indicadores são o recorte interseccional fixo do trabalho: mulheres negras, mulheres brancas, homens negros e homens brancos. Cada um mostra a fatia do dinheiro do grupo e, na seta, a diferença em pontos percentuais para a fatia dele nas candidaturas. Os filtros mudam o recorte sobre o qual as fatias são calculadas; se o grupo não existe no recorte (por exemplo, homens quando o filtro de gênero é só feminino), o indicador mostra "—". O de mulheres negras é o central do trabalho: junta gênero (ODS 5) e raça (ODS 18) num único número. População negra segue o critério do IBGE, soma de pretos e pardos. O total de candidaturas e de dinheiro do recorte aparece na legenda logo abaixo dos indicadores.
 
 ### Implantação do painel
 
